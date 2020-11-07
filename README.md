@@ -1,19 +1,23 @@
 # bmap-tools-rs
 
-A work-in-progress reimplementation of [bmap-tools](https://github.com/intel/bmap-tools) in Rust.
+A reimplementation of [bmap-tools](https://github.com/intel/bmap-tools) in Rust.
 
-The plan is to re-implement only 'bmap copy' at the moment.
+This project only re-implements 'bmap copy' at the moment.
 
-## Done
+## Usage Example
 
-- Read block size and ranges from a sample XML file
-- Add command-line parsing to pick up filename.
-- Read gz-compressed image files, decompressing on the fly
-- Detect unused blocks in decoded stream and treat them specially.
+A typical Yocto/Poky build will give you a gzip and bmap file. Pass these
+filenames as arguments along with the target block device.
+
+```
+bmap-tools-rs yocto.rootfs.wic.gz yocto.rootfs.wic.bmap /dev/<<YOUR_BLOCK_DEVICE>>
+```
+
+WARNING: Double-check you have the correct block device. A feature is
+forthcoming to ensure you never write a mounted device (PRs welcome!).
 
 ## Todo
 
-- Write (only used) blocks to the target block device
-- fsync/fdatasync when done
 - Check that target block device is not mounted before starting
+- Progress meter and output like original bmap-tools
 - Read and verify checksums in ranges

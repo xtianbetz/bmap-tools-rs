@@ -2,9 +2,12 @@ extern crate xml;
 
 use std::env;
 use std::io;
-use std::fs::File;
+use std::io::{Error, ErrorKind};
 use std::io::BufReader;
+use std::io::SeekFrom;
 use std::io::prelude::*;
+use std::fs::OpenOptions;
+use std::fs::File;
 use flate2::bufread::GzDecoder;
 use std::convert::TryInto;
 
@@ -41,14 +44,24 @@ fn blockmap_contains_block(b:&BlockMap, candidate_block:usize) -> bool {
 
 fn main() -> io::Result<()> {
     let args: Vec<String> = env::args().collect();
-    let image_filename = &args[1];
-    //let bmap_filename = image_filename.replace(".gz", ".bmap");
-    let bmap_filename = &args[2];
+    if env::args().len() < 4  {
+        eprintln!("Usage: {} image_filename bmap_filename target_device", &args[0]);
+        return Err(Error::new(ErrorKind::Other, "Bad Arguments"));
+    }
 
+    let image_filename = &args[1];
+    let bmap_filename = &args[2];
+    let blockdev_filename = &args[3];
+
+    eprintln!("Image Filename: {}", image_filename);
+    eprintln!("BMAP Filename: {}", bmap_filename);
+    eprintln!("Target Device: {}", blockdev_filename);
+
+    let mut blockdev = OpenOptions::new().write(true)
+                                         .create_new(false)
+                                         .open(blockdev_filename)?;
     let file = File::open(bmap_filename)?;
     let file = BufReader::new(file);
-
-    eprintln!("Files: {}/{}", image_filename, bmap_filename);
 
     let parser = EventReader::new(file);
 
@@ -119,10 +132,7 @@ fn main() -> io::Result<()> {
 
     let mut gchunk = gzreader.take(native_chunk_size);
     let mut gbuf = vec![0; chunk_size];
-    let zbuf = vec![0; chunk_size];
 
-    let stdout = io::stdout();
-    let mut outhandle = stdout.lock();
     let mut chunk_remaining_bytes:usize = chunk_size;
 
     let mut block_count = 0;
@@ -141,11 +151,10 @@ fn main() -> io::Result<()> {
                 // We may not get a complete block-sized read(),
                 // so we need to write() only up to byte_count
                 if blockmap_contains_block(&bmap, block_count) {
-                    outhandle.write_all(&gbuf[0..byte_count])?;
+                    blockdev.write_all(&gbuf[0..byte_count])?;
                 } else {
-                    // Fake writing zeroes for now until we
-                    // can seek block devices or sparse files.
-                    outhandle.write_all(&zbuf[0..byte_count])?;
+                    // We don't care about these blocks, so simply seek over them.
+                    blockdev.seek(SeekFrom::Current(byte_count.try_into().unwrap()))?;
                 }
                 chunk_remaining_bytes -= byte_count;
             }
@@ -156,8 +165,7 @@ fn main() -> io::Result<()> {
         }
     }
 
-    outhandle.flush()?;
-    // TODO: sync_all/fsync_all when writing to a real file
+    blockdev.sync_all()?;
 
     Ok(())
 }
