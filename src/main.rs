@@ -132,6 +132,7 @@ fn main() -> io::Result<()> {
 
     let mut gchunk = gzreader.take(native_chunk_size);
     let mut gbuf = vec![0; chunk_size];
+    let mut xbuf = vec![0; chunk_size];
 
     let mut chunk_remaining_bytes:usize = chunk_size;
 
@@ -140,6 +141,19 @@ fn main() -> io::Result<()> {
         let r = gchunk.read(&mut gbuf);
         match r {
             Ok(0) => {
+                // End of a chunk
+                if blockmap_contains_block(&bmap, block_count) {
+                    if chunk_remaining_bytes > 0 {
+                        // This means we finished reading chunks and have a partial chunk
+                        blockdev.write_all(&xbuf[0..(chunk_size - chunk_remaining_bytes)])?;
+                    } else {
+                        // We have a full chunk to write
+                        blockdev.write_all(&xbuf)?;
+                    }
+                } else {
+                    // Seek over this chunk
+                    blockdev.seek(SeekFrom::Current(native_chunk_size.try_into().unwrap()))?;
+                }
                 if chunk_remaining_bytes > 0 {
                     break;
                 }
@@ -148,13 +162,11 @@ fn main() -> io::Result<()> {
                 block_count += 1;
             }
             Ok(byte_count) => {
-                // We may not get a complete block-sized read(),
-                // so we need to write() only up to byte_count
                 if blockmap_contains_block(&bmap, block_count) {
-                    blockdev.write_all(&gbuf[0..byte_count])?;
+                    xbuf[(chunk_size - chunk_remaining_bytes)..(chunk_size - chunk_remaining_bytes + byte_count)].
+                        clone_from_slice(&mut gbuf[0..byte_count]);
                 } else {
-                    // We don't care about these blocks, so simply seek over them.
-                    blockdev.seek(SeekFrom::Current(byte_count.try_into().unwrap()))?;
+                    // We don't care about these blocks; they will be seeked over
                 }
                 chunk_remaining_bytes -= byte_count;
             }
@@ -165,7 +177,7 @@ fn main() -> io::Result<()> {
         }
     }
 
-    blockdev.sync_all()?;
+    //blockdev.sync_data()?;
 
     Ok(())
 }
