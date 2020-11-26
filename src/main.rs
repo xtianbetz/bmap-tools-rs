@@ -10,6 +10,7 @@ use std::fs::OpenOptions;
 use std::fs::File;
 use flate2::bufread::GzDecoder;
 use std::convert::TryInto;
+use std::time::Instant;
 
 use xml::reader::{EventReader, XmlEvent};
 
@@ -32,6 +33,12 @@ enum BmapXmlNode {
     BlockSize
 }
 
+enum BlockMapChunkCoverage {
+    ChunkCoversSomeBlocks,
+    ChunkCoversNoBlocks
+}
+
+// Should this be an object called with blockmap.method()?
 fn blockmap_contains_block(b:&BlockMap, candidate_block:usize) -> bool {
     for range in &b.block_ranges {
         if candidate_block >= range.start &&
@@ -40,6 +47,15 @@ fn blockmap_contains_block(b:&BlockMap, candidate_block:usize) -> bool {
         }
     }
     return false;
+}
+
+fn blockmap_covers_range(b:&BlockMap, block_range_start:usize, block_range_end:usize) -> BlockMapChunkCoverage {
+    for block_idx in block_range_start..block_range_end {
+        if blockmap_contains_block(&b, block_idx) {
+            return BlockMapChunkCoverage::ChunkCoversSomeBlocks;
+        }
+    }
+    return BlockMapChunkCoverage::ChunkCoversNoBlocks;
 }
 
 fn main() -> io::Result<()> {
@@ -120,10 +136,12 @@ fn main() -> io::Result<()> {
         }
     }
 
-    let g = File::open(image_filename)?;
-    let chunk_size:usize = 4096;
 
-    // TODO: check gzip error
+    let start_time = Instant::now();
+    let g = File::open(image_filename)?;
+    let bmap_block_size:usize = bmap.block_size;
+    let chunk_size:usize = 1048576; // 1MB
+
     let greader = BufReader::with_capacity(chunk_size, g);
     // TODO: if not compressed, this is just a regular reader
     //let greader = BufReader::new(g);
@@ -132,30 +150,51 @@ fn main() -> io::Result<()> {
 
     let mut gchunk = gzreader.take(native_chunk_size);
     let mut gbuf = vec![0; chunk_size];
+    let mut xbuf = vec![0; chunk_size];
 
     let mut chunk_remaining_bytes:usize = chunk_size;
+    let max_blocks_per_read = chunk_size / bmap_block_size;
 
     let mut block_count = 0;
+    let mut written_chunk_count = 0;
+    let mut skipped_chunk_count = 0;
     loop {
         let r = gchunk.read(&mut gbuf);
         match r {
             Ok(0) => {
+                // End of a chunk
                 if chunk_remaining_bytes > 0 {
+                    // If we didn't read a whole chunk it means we're done, and
+                    // that was the last chunk. In this case we may have a partial chunk
+                    // So just write the bytes without looking at the blockmap.
+                    blockdev.write_all(&xbuf[0..(chunk_size - chunk_remaining_bytes)])?;
+                    written_chunk_count += 1;
                     break;
+                }
+
+                let block_range_start = block_count;
+                let block_range_end = block_count + (chunk_size / bmap.block_size);
+
+                match blockmap_covers_range(&bmap, block_range_start, block_range_end) {
+                    BlockMapChunkCoverage::ChunkCoversNoBlocks => {
+                        // Seek over the whole chunk
+                        skipped_chunk_count += 1;
+                        blockdev.seek(SeekFrom::Current(native_chunk_size.try_into().unwrap()))?;
+                    }
+                    BlockMapChunkCoverage::ChunkCoversSomeBlocks => {
+                        // Write the whole chunk
+                        blockdev.write_all(&xbuf)?;
+                        written_chunk_count += 1;
+                    }
                 }
                 gchunk.set_limit(native_chunk_size);
                 chunk_remaining_bytes = chunk_size;
-                block_count += 1;
+                block_count += max_blocks_per_read;
             }
             Ok(byte_count) => {
-                // We may not get a complete block-sized read(),
-                // so we need to write() only up to byte_count
-                if blockmap_contains_block(&bmap, block_count) {
-                    blockdev.write_all(&gbuf[0..byte_count])?;
-                } else {
-                    // We don't care about these blocks, so simply seek over them.
-                    blockdev.seek(SeekFrom::Current(byte_count.try_into().unwrap()))?;
-                }
+                // Just save the bytes to a chunk-sized buffer until we have a whole chunk
+                xbuf[(chunk_size - chunk_remaining_bytes)..(chunk_size - chunk_remaining_bytes + byte_count)].
+                    clone_from_slice(&mut gbuf[0..byte_count]);
                 chunk_remaining_bytes -= byte_count;
             }
             Err(e) => {
@@ -165,7 +204,13 @@ fn main() -> io::Result<()> {
         }
     }
 
-    blockdev.sync_all()?;
+    if env::consts::OS == "macos" {
+        // Apparently no fsync is needed on mac?
+    } else {
+        blockdev.sync_all()?;
+    }
+
+    eprintln!("Time to write chunks: {}s [wrote {} MB, skipped {} MB]", start_time.elapsed().as_secs(), written_chunk_count, skipped_chunk_count);
 
     Ok(())
 }
