@@ -41,8 +41,8 @@ Finally, burn the image to the device:
 
 ```
 [user@linux ~]$ sudo bmap-tools-rs yocto.rootfs.wic.gz yocto.rootfs.wic.bmap /dev/<<YOUR_BLOCK_DEVICE>>
-Image Filename: samples/yocto.rootfs.wic.gz
-BMAP Filename: samples/yocto.rootfs.wic.bmap
+Image Filename: yocto.rootfs.wic.gz
+BMAP Filename: yocto.rootfs.wic.bmap
 Target Device: /dev/<<YOUR_BLOCK_DEVICE>>
 Time to write chunks: 65s [wrote 828 MB, skipped 14149 MB]
 ```
@@ -74,8 +74,8 @@ device is /dev/disk2, we suggest you supply /dev/rdisk2 as a parameter).
 
 ```
 user@Mac ~ % sudo bmap-tools-rs yocto.rootfs.wic.gz yocto.rootfs.wic.bmap /dev/r<<YOUR_BLOCK_DEVICE>>
-Image Filename: samples/poolside-image-poolsided98-20201029154735.rootfs.wic.gz
-BMAP Filename: samples/poolside-image-poolsided98-20201029154735.rootfs.wic.bmap
+Image Filename: yocto.rootfs.wic.gz
+BMAP Filename: yocto.rootfs.wic.bmap
 Target Device: /dev/r<<YOUR_BLOCK_DEVICE>>
 Time to write chunks: 161s [wrote 828 MB, skipped 14149 MB]
 
